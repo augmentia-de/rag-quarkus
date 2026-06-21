@@ -277,6 +277,9 @@
             <properties>
                 <skipITs>false</skipITs>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
+                <quarkus.native.native-image-xmx>6g</quarkus.native.native-image-xmx>
+                <quarkus.native.march>native</quarkus.native.march>
+                <quarkus.native.additional-build-args>--future-defaults=all</quarkus.native.additional-build-args>
             </properties>
         </profile>
     </profiles>

@@ -11,19 +11,25 @@ User Query → [Query Router / Decomposer]
       [pgvector (cosine)] + [PostgreSQL tsvector (BM25)]
                   │
                   ▼
-   [Reciprocal Rank Fusion (RRF)] → [Cross-Encoder Reranker]
-                  │
-                  ▼ (Strict Prompt Isolation)
-        [Cited Content Generation]
-                  │
-                  ▼
-      [Atomic Claim Decomposition]
-                  │
-                  ▼ (NLI Faithfulness Gate)
-                  │
-       ┌──────────┴──────────┐
-       ▼ (Pass)              ▼ (Fail)
- [Final Response]    [CRAG Loop / Abstain]
+   [Reciprocal Rank Fusion (RRF)] → [Cross-Encoder Reranker] ───┐
+                  │                                                │
+                  ▼ (Strict Prompt Isolation)                      │ (GraphRAG)
+            [Cited Content Generation]                            │
+                  │                                                │
+                  ▼                                                ▼
+      [Knowledge Graph Traversal] ──────────────────── [Graph-Augmented Context]
+       (BFS over graph_nodes / graph_edges)                     │
+                  │                                                │
+                  └───────────────┬────────────────────────────────┘
+                                  ▼
+                    [Atomic Claim Decomposition]
+                                  │
+                                  ▼
+                    [NLI Faithfulness Gate]
+                                  │
+                        ┌─────────┴─────────┐
+                        ▼ (Pass)            ▼ (Fail)
+                  [Final Response]      [CRAG Loop / Abstain]
 ```
 
 ## Quickstart
@@ -59,6 +65,7 @@ docker compose up -d
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/v1/rag/query` | POST | Answer a question with cited evidence |
+| `/api/v1/rag/graph-query` | POST | GraphRAG query — traverses knowledge graph |
 | `/api/v1/rag/ingest` | POST | Ingest documents into the index |
 | `/q/health` | GET | Health check (liveness + readiness) |
 | `/q/metrics` | GET | Micrometer metrics |
@@ -74,6 +81,7 @@ docker compose up -d
 - **Query Routing**: Classifies SIMPLE / COMPARISON / MULTI_HOP / FALSE_PREMISE
 - **Structure-Aware Chunking**: Sentence-boundary chunking with contextual prefix
 - **Near-Duplicate Dedup**: MinHash LSH during ingestion
+- **GraphRAG (Knowledge Graph)**: Entity + relation extraction during ingestion, BFS graph traversal with pgvector for relationship-aware queries
 
 ## Configuration
 
@@ -88,19 +96,25 @@ Key properties in `application.properties`:
 | `rag.rerank.top-n` | `20` | Final context count |
 | `rag.judge.tau-claim` | `0.3` | Faithfulness threshold |
 | `rag.crag.max-hops` | `3` | CRAG loop limit |
+| `rag.graph.enabled` | `false` | Enable GraphRAG augmentation |
+| `rag.graph.hops` | `2` | BFS traversal depth for graph queries |
+| `rag.graph.max-nodes` | `20` | Maximum nodes in graph subgraph |
+| `rag.graph.extraction.max-triples-per-chunk` | `5` | Entity triples extracted per chunk |
+| `rag.graph.extraction.temperature` | `0.0` | LLM temperature for graph extraction |
 
 ## Project Structure
 
 ```
-src/main/java/com/enterprise/rag/
-├── domain/          # Records: Chunk, RagQuery, RagResponse, AtomicClaim, ...
-├── repository/      # JPA entities + pgvector/tsvector native queries
-├── engine/          # Core pipeline: RRF, Reranker, Judge, Router, Decomposer
+src/main/java/de/augmentia/rag/
+├── domain/          # Records: Chunk, RagQuery, RagResponse, AtomicClaim, GraphNode, GraphEdge, ...
+├── repository/      # JPA entities + pgvector/tsvector native queries + graph repos
+├── engine/          # Core pipeline: RRF, Reranker, Judge, Router, GraphSearchService
 ├── ingestion/       # Cleaner, Deduper, Chunker, Contextualizer
+├── ai/              # LangChain4j AI services: Generator, Embedding, Judge, GraphExtractor
 ├── rest/            # REST resources (versioned: /api/v1)
-├── ai/              # LangChain4j AI service interfaces
 ├── config/          # Configuration validation + monitoring
-└── auth/            # API key authentication
+├── auth/            # API key authentication
+└── mcp/             # MCP tools for external integrations
 ```
 
 ## Stack
