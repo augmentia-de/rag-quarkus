@@ -1,6 +1,7 @@
 package de.augmentia.rag.mcp;
 
 import java.util.List;
+import java.util.UUID;
 
 import jakarta.inject.Inject;
 
@@ -51,15 +52,17 @@ public class RagMcpTools {
     }
 
     public record DocumentInput(String id, String docId, String title, String text) {}
+    public record MCPIngestResult(UUID jobId, String status) {}
 
     @Tool(description = "Indiziert Dokumente im RAG-System. " +
             "Erwartet eine Liste von Dokumenten mit id, docId, title und text. " +
             "Führt automatisch Cleaning, Chunking, Kontextualisierung und Embedding durch.")
-    IngestionPipeline.IngestionResult rag_ingest(
+    MCPIngestResult rag_ingest(
             @ToolArg(description = "Liste der zu indizierenden Dokumente") List<DocumentInput> documents) {
         List<Chunk> chunks = documents.stream()
                 .map(d -> new Chunk(d.id(), d.docId(), d.title(), d.text(), null, List.of()))
                 .toList();
-        return ingestionPipeline.ingest(chunks);
+        UUID jobId = ingestionPipeline.submitForIngestion(chunks);
+        return new MCPIngestResult(jobId, "PENDING");
     }
 }

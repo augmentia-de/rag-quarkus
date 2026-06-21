@@ -9,7 +9,9 @@ import de.augmentia.rag.repository.ChunkEntity;
 import de.augmentia.rag.repository.ChunkRepository;
 import de.augmentia.rag.repository.GraphEdgeEntity;
 import de.augmentia.rag.repository.GraphEdgeRepository;
+import de.augmentia.rag.repository.GraphNodeEntity;
 import de.augmentia.rag.repository.GraphNodeRepository;
+import de.augmentia.rag.repository.GraphTraversalRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -24,6 +26,7 @@ public class GraphSearchService {
 
     @Inject GraphNodeRepository graphNodeRepo;
     @Inject GraphEdgeRepository graphEdgeRepo;
+    @Inject GraphTraversalRepository traversalRepository;
     @Inject ChunkRepository chunkRepo;
     @Inject EmbeddingModelClient embeddingClient;
 
@@ -44,7 +47,7 @@ public class GraphSearchService {
                 entity, (System.nanoTime() - tEmb) / 1_000_000, entityVec.length);
 
             List<Object[]> matches = graphNodeRepo.searchByEmbedding(entityVec, 5);
-            log.debugv("graphSearch: embedding search for '{0}' → {1} matches", entity, matches.size());
+            log.debugv("graphSearch: embedding search for '{0}' -> {1} matches", entity, matches.size());
             for (Object[] row : matches) {
                 String nodeId = (String) row[0];
                 if (visitedNodeIds.add(nodeId)) {
@@ -57,54 +60,35 @@ public class GraphSearchService {
             if (visitedNodeIds.size() >= maxNodes) break;
         }
 
-        log.debugv("graphSearch: starting BFS from {0} seed nodes, hops={1}, maxNodes={2}",
+        if (visitedNodeIds.isEmpty()) {
+            log.debugv("graphSearch: no seed nodes found for query='{0}'", question);
+            return new GraphSearchResult(List.of(), List.of(), List.of());
+        }
+
+        log.debugv("graphSearch: starting CTE traversal from {0} seed nodes, hops={1}, maxNodes={2}",
             visitedNodeIds.size(), hops, maxNodes);
 
-        Queue<String> queue = new LinkedList<>(visitedNodeIds);
-        Set<String> alreadyQueued = new HashSet<>(visitedNodeIds);
-        Map<String, GraphEdge> relevantEdges = new LinkedHashMap<>();
+        List<String> connectedIds = traversalRepository.findConnectedNodeIds(
+            new ArrayList<>(visitedNodeIds), hops, maxNodes);
 
-        int currentHop = 0;
-        while (!queue.isEmpty() && currentHop < hops) {
-            int levelSize = queue.size();
-            log.debugv("graphSearch: BFS hop={0} frontier={1} visited={2}",
-                currentHop, levelSize, visitedNodeIds.size());
-            for (int i = 0; i < levelSize && visitedNodeIds.size() < maxNodes; i++) {
-                String currentId = queue.poll();
-                List<GraphEdgeEntity> edges = graphEdgeRepo.findBySourceOrTarget(currentId);
-                log.debugv("graphSearch: node='{0}' has {1} edges",
-                    currentId, edges.size());
-                for (GraphEdgeEntity edgeEntity : edges) {
-                    relevantEdges.putIfAbsent(edgeEntity.id, edgeEntity.toDomain());
-                    String neighborId = edgeEntity.sourceNodeId.equals(currentId)
-                        ? edgeEntity.targetNodeId : edgeEntity.sourceNodeId;
-                    if (!alreadyQueued.contains(neighborId) && visitedNodeIds.size() < maxNodes) {
-                        alreadyQueued.add(neighborId);
-                        visitedNodeIds.add(neighborId);
-                        queue.offer(neighborId);
-                    }
-                }
-            }
-            currentHop++;
-        }
+        log.debugv("graphSearch: CTE returned {0} connected node ids", connectedIds.size());
 
-        log.debugv("graphSearch: BFS done — found {0} nodes, {1} edges",
-            visitedNodeIds.size(), relevantEdges.size());
-
-        Set<String> missingIds = new LinkedHashSet<>(visitedNodeIds);
-        missingIds.removeAll(nodeById.keySet());
-        if (!missingIds.isEmpty()) {
-            log.debugv("graphSearch: loading {0} BFS-discovered nodes from DB", missingIds.size());
-            var bfsNodes = graphNodeRepo.find("id IN ?1", List.copyOf(missingIds)).list();
-            for (var entity : bfsNodes) {
-                nodeById.putIfAbsent(entity.id, new GraphNode(
+        connectedIds.forEach(id -> nodeById.computeIfAbsent(id, k -> {
+            GraphNodeEntity entity = graphNodeRepo.find("id", k).firstResult();
+            if (entity != null) {
+                return new GraphNode(
                     entity.id, entity.chunkId, entity.entityName,
                     entity.entityType, entity.description, null, entity.createdAt
-                ));
+                );
             }
-        }
+            return null;
+        }));
 
-        Set<String> chunkIds = visitedNodeIds.stream()
+        List<GraphEdge> relevantEdges = graphEdgeRepo.findEdgesBetweenNodes(connectedIds).stream()
+            .map(GraphEdgeEntity::toDomain)
+            .toList();
+
+        Set<String> chunkIds = connectedIds.stream()
             .map(nodeById::get)
             .filter(Objects::nonNull)
             .map(GraphNode::chunkId)
@@ -120,9 +104,14 @@ public class GraphSearchService {
         log.infov("Graph search completed in {0}ms: {1} nodes, {2} edges, {3} chunks",
             elapsed, visitedNodeIds.size(), relevantEdges.size(), chunks.size());
 
+        List<GraphNode> finalNodes = connectedIds.stream()
+            .map(nodeById::get)
+            .filter(Objects::nonNull)
+            .toList();
+
         return new GraphSearchResult(
-            new ArrayList<>(nodeById.values()),
-            new ArrayList<>(relevantEdges.values()),
+            finalNodes,
+            relevantEdges,
             chunks
         );
     }

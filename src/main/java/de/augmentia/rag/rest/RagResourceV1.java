@@ -23,6 +23,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
+import java.util.UUID;
 
 @Path("/api/v1/rag")
 @Produces(MediaType.APPLICATION_JSON)
@@ -134,24 +135,39 @@ public class RagResourceV1 {
 
     @POST
     @Path("/ingest")
-    @Operation(summary = "Ingest documents into the index",
-               description = "Cleans, chunks, contextualizes, embeds, and indexes documents")
-    @APIResponse(responseCode = "200", description = "Ingestion result")
+    @Operation(summary = "Ingest documents asynchronously",
+               description = "Accepts documents, returns jobId for status polling")
+    @APIResponse(responseCode = "202", description = "Job accepted")
     public Response ingest(@Valid @RequestBody(required = true) IngestRequest request) {
         log.debugv("ingest: {0} documents received", request.documents().size());
         try {
             var chunks = request.documents().stream()
                 .map(d -> new Chunk(d.id(), d.docId(), d.title(), d.text(), d.text(), List.of()))
                 .toList();
-            var result = ingestionPipeline.ingest(chunks);
-            log.debugv("ingest: {0} input passages, {1} indexed, {2} duplicates removed",
-                result.inputPassages(), result.chunksIndexed(), result.duplicatesRemoved());
-            return Response.ok(result).build();
+            UUID jobId = ingestionPipeline.submitForIngestion(chunks);
+            log.debugv("ingest: job {0} submitted for {1} documents", jobId, chunks.size());
+            return Response.accepted()
+                .entity(new IngestionResponse(jobId, "Job accepted. Check status at /api/v1/rag/ingest/" + jobId))
+                .build();
         } catch (Exception e) {
+            log.error("Ingestion submission error", e);
             return Response.serverError()
                 .entity(new RagError("Ingestion error: " + e.getMessage()))
                 .build();
         }
+    }
+
+    @GET
+    @Path("/ingest/{jobId}")
+    @Operation(summary = "Get ingestion job status")
+    @APIResponse(responseCode = "200", description = "Job status")
+    @APIResponse(responseCode = "404", description = "Job not found")
+    public Response getJobStatus(@PathParam("jobId") UUID jobId) {
+        IngestionJobEntity job = IngestionJobEntity.findById(jobId);
+        if (job == null) {
+            return Response.status(Response.Status.NOT_FOUND).build();
+        }
+        return Response.ok(job).build();
     }
 
     public record RagQueryRequest(
@@ -188,8 +204,11 @@ public class RagResourceV1 {
     ) {}
 
     public record IngestRequest(
-        @Valid List<DocumentRequest> documents
+        @Valid List<DocDto> documents
     ) {}
+
+    public record DocDto(String id, String docId, String title, String text) {}
+    public record IngestionResponse(java.util.UUID jobId, String message) {}
 
     public record DocumentRequest(
         @NotBlank String id,

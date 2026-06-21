@@ -22,6 +22,17 @@ public class DatabaseResource implements QuarkusTestResourceLifecycleManager {
              var s = conn.createStatement()) {
             s.execute("CREATE EXTENSION IF NOT EXISTS vector");
             s.execute("""
+                CREATE TABLE IF NOT EXISTS rag_ingestion_jobs (
+                    id UUID PRIMARY KEY,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    total_chunks INT NOT NULL DEFAULT 0,
+                    processed_chunks INT NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """);
+            s.execute("""
                 CREATE TABLE IF NOT EXISTS rag_chunks (
                     id          VARCHAR(128) PRIMARY KEY,
                     doc_id      VARCHAR(128),
