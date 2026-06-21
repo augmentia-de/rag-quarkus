@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG Quarkus UI</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; color: #222; }
+.container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 1.4rem; margin-bottom: 16px; }
+.tabs { display: flex; gap: 0; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
+.tab-btn { padding: 10px 24px; border: none; background: none; font-size: 1rem; cursor: pointer; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s; }
+.tab-btn:hover { color: #222; }
+.tab-btn.active { color: #1565c0; border-bottom-color: #1565c0; font-weight: 600; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.form-row { margin-bottom: 12px; }
+label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; color: #444; }
+input, textarea, select { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; font-family: inherit; }
+textarea { min-height: 100px; resize: vertical; }
+input:focus, textarea:focus { outline: none; border-color: #1565c0; box-shadow: 0 0 0 2px rgba(21,101,192,.15); }
+.btn { padding: 8px 20px; border: none; border-radius: 6px; font-size: .9rem; cursor: pointer; font-weight: 500; transition: background .15s; }
+.btn-primary { background: #1565c0; color: #fff; }
+.btn-primary:hover { background: #0d47a1; }
+.btn-primary:disabled { background: #90caf9; cursor: not-allowed; }
+.btn-secondary { background: #e0e0e0; color: #333; }
+.btn-secondary:hover { background: #bdbdbd; }
+.inline-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.inline-group input { flex: 1; min-width: 120px; }
+.result { background: #f8f9fa; border-radius: 6px; padding: 12px; margin-top: 12px; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; max-height: 400px; overflow: auto; }
+.result.success { border-left: 3px solid #2e7d32; }
+.result.error { border-left: 3px solid #c62828; }
+.chunk-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
+.chunk-id { font-size: .75rem; color: #888; word-break: break-all; }
+.chunk-title { font-weight: 600; font-size: .9rem; }
+.chunk-text { font-size: .85rem; color: #444; margin-top: 4px; white-space: pre-wrap; }
+.mode-selector { display: flex; gap: 0; margin-bottom: 16px; }
+.mode-btn { padding: 6px 16px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: .85rem; }
+.mode-btn:first-child { border-radius: 6px 0 0 6px; }
+.mode-btn:last-child { border-radius: 0 6px 6px 0; }
+.mode-btn.active { background: #1565c0; color: #fff; border-color: #1565c0; }
+.mode-panel { display: none; }
+.mode-panel.active { display: block; }
+.toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; color: #fff; font-size: .85rem; max-width: 400px; z-index: 100; opacity: 0; transition: opacity .3s; }
+#graph-container canvas { border-radius: 6px; }
+.toast.show { opacity: 1; }
+.toast.info { background: #1565c0; }
+.toast.error { background: #c62828; }
+.toast.success { background: #2e7d32; }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.answer-block { background: #e8f5e9; border-left: 3px solid #2e7d32; padding: 12px; border-radius: 0 6px 6px 0; margin-top: 12px; white-space: pre-wrap; }
+.answer-block.abstained { background: #fff3e0; border-left-color: #e65100; }
+.citation-tag { display: inline-block; background: #e3f2fd; padding: 2px 8px; border-radius: 4px; font-size: .75rem; font-family: monospace; margin: 2px; }
+.verdict-pass { color: #2e7d32; font-weight: 600; }
+.verdict-fail { color: #c62828; font-weight: 600; }
+</style>
+<script src="https://unpkg.com/vis-network@latest/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+<div class="container">
+  <h1>RAG Quarkus</h1>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="ingest">Ingest</button>
+    <button class="tab-btn" data-tab="retrieval">Retrieval</button>
+    <button class="tab-btn" data-tab="graph">Graph</button>
+  </div>
+
+  <!-- INGEST TAB -->
+  <div class="tab-content active" id="tab-ingest">
+    <div class="card">
+      <div class="form-row">
+        <label>API Key</label>
+        <input type="text" id="ingest-api-key" value="dev-key-change-me">
+      </div>
+      <div class="mode-selector">
+        <button class="mode-btn active" data-mode="text">Text</button>
+        <button class="mode-btn" data-mode="url">URL</button>
+        <button class="mode-btn" data-mode="file">Datei</button>
+      </div>
+
+      <div class="mode-panel active" id="mode-text">
+        <div class="form-row">
+          <label>Text</label>
+          <textarea id="ingest-text" placeholder="Dokumenttext eingeben..."></textarea>
+        </div>
+      </div>
+
+      <div class="mode-panel" id="mode-url">
+        <div class="form-row">
+          <label>URL</label>
+          <input type="url" id="ingest-url" placeholder="https://example.com/text">
+        </div>
+        <div class="form-row">
+          <label>Title</label>
+          <input type="text" id="ingest-url-title" placeholder="Titel (optional)">
+        </div>
+        <button class="btn btn-secondary" onclick="fetchAndIngestUrl()" id="fetch-url-btn">URL fetchen &amp; ingestieren</button>
+      </div>
+
+      <div class="mode-panel" id="mode-file">
+        <div class="form-row">
+          <label>Datei auswählen (.txt, .md)</label>
+          <input type="file" id="ingest-file" accept=".txt,.md,.html,.json,.csv">
+        </div>
+      </div>
+
+      <div class="form-row inline-group">
+        <div style="flex:1">
+          <label>ID (optional)</label>
+          <input type="text" id="ingest-id" placeholder="z.B. doc-1">
+        </div>
+        <div style="flex:1">
+          <label>DocId (optional)</label>
+          <input type="text" id="ingest-doc-id" placeholder="z.B. mein-dokument">
+        </div>
+        <div style="flex:1">
+          <label>Title (optional)</label>
+          <input type="text" id="ingest-title" placeholder="z.B. Mein Dokument">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick="ingestText()" id="ingest-btn">Ingestieren</button>
+      <div id="ingest-result"></div>
+    </div>
+  </div>
+
+  <!-- RETRIEVAL TAB -->
+  <div class="tab-content" id="tab-retrieval">
+    <div class="card">
+      <div class="form-row">
+        <label>API Key</label>
+        <input type="text" id="query-api-key" value="dev-key-change-me">
+      </div>
+      <div class="form-row">
+        <label>Frage</label>
+        <textarea id="query-text" placeholder="Ihre Frage..." style="min-height:60px"></textarea>
+      </div>
+      <div class="form-row inline-group">
+        <div style="flex:1">
+          <label>Top-K</label>
+          <input type="number" id="query-topk" value="5" min="1" max="20">
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="retrieveChunks()" id="retrieve-btn">Nur Retrieval</button>
+        <button class="btn btn-primary" onclick="queryFull()" id="query-btn">Vollständige Anfrage</button>
+      </div>
+      <div id="retrieval-result"></div>
+    </div>
+  </div>
+
+  <!-- GRAPH TAB -->
+  <div class="tab-content" id="tab-graph">
+    <div class="card">
+      <div class="form-row">
+        <label>API Key</label>
+        <input type="text" id="graph-api-key" value="dev-key-change-me">
+      </div>
+      <div class="form-row">
+        <label>Frage / Entity</label>
+        <textarea id="graph-question" placeholder="z.B. Elena Vasquez Marcus Webb" style="min-height:60px"></textarea>
+      </div>
+      <div class="form-row inline-group">
+        <div style="flex:1">
+          <label>Hops</label>
+          <input type="number" id="graph-hops" value="2" min="1" max="10">
+        </div>
+        <div style="flex:1">
+          <label>Max Nodes</label>
+          <input type="number" id="graph-max-nodes" value="30" min="5" max="200">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="graphQuery()" id="graph-btn">Graph Query</button>
+      <div id="graph-container" style="width:100%;height:520px;border:1px solid #e0e0e0;border-radius:6px;margin-top:12px;background:#fafafa;"></div>
+      <div id="graph-result" style="margin-top:12px;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const API_BASE = '';
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast ' + type;
+  t.offsetHeight; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+function getApiKey(tab) {
+  return document.getElementById(tab + '-api-key').value;
+}
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// Mode switching (ingest)
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.mode-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('mode-' + btn.dataset.mode).classList.add('active');
+  });
+});
+
+// File auto-ingest
+document.getElementById('ingest-file').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    document.getElementById('ingest-text').value = ev.target.result;
+    document.getElementById('ingest-id').value = file.name.replace(/\.[^/.]+$/, '');
+    document.getElementById('ingest-doc-id').value = file.name;
+    document.getElementById('ingest-title').value = file.name;
+    document.querySelector('.mode-btn[data-mode="text"]').click();
+    showToast('Datei geladen: ' + file.name, 'success');
+  };
+  reader.readAsText(file);
+});
+
+// Ingest text
+async function ingestText() {
+  const btn = document.getElementById('ingest-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Ingestieren...';
+  const resultDiv = document.getElementById('ingest-result');
+  resultDiv.innerHTML = '';
+
+  try {
+    const text = document.getElementById('ingest-text').value.trim();
+    if (!text) { showToast('Bitte Text eingeben', 'error'); btn.disabled = false; btn.textContent = 'Ingestieren'; return; }
+
+    const id = document.getElementById('ingest-id').value.trim() || 'doc-' + Date.now();
+    const docId = document.getElementById('ingest-doc-id').value.trim() || id;
+    const title = document.getElementById('ingest-title').value.trim() || 'Unbenanntes Dokument';
+
+    const res = await fetch(API_BASE + '/api/v1/rag/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey('ingest') },
+      body: JSON.stringify({ documents: [{ id, docId, title, text }] })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    resultDiv.innerHTML = '<div class="result success">' + JSON.stringify(data, null, 2) + '</div>';
+    showToast('Ingestiert: ' + data.chunksIndexed + ' Chunks', 'success');
+  } catch (e) {
+    resultDiv.innerHTML = '<div class="result error">' + e.message + '</div>';
+    showToast('Fehler: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Ingestieren';
+  }
+}
+
+// Fetch URL and ingest
+async function fetchAndIngestUrl() {
+  const btn = document.getElementById('fetch-url-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Fetche...';
+  const resultDiv = document.getElementById('ingest-result');
+  resultDiv.innerHTML = '';
+
+  try {
+    const url = document.getElementById('ingest-url').value.trim();
+    if (!url) { showToast('Bitte URL eingeben', 'error'); btn.disabled = false; btn.textContent = 'URL fetchen & ingestieren'; return; }
+
+    const fetchRes = await fetch(API_BASE + '/api/v1/rag/fetch-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey('ingest') },
+      body: JSON.stringify({ url })
+    });
+    const fetchData = await fetchRes.json();
+    if (!fetchRes.ok) throw new Error(fetchData.error || fetchRes.statusText);
+
+    document.getElementById('ingest-text').value = fetchData.content;
+    const urlTitle = document.getElementById('ingest-url-title').value.trim();
+    if (urlTitle) document.getElementById('ingest-title').value = urlTitle;
+    if (!document.getElementById('ingest-id').value.trim()) {
+      document.getElementById('ingest-id').value = 'url-' + Date.now();
+    }
+    if (!document.getElementById('ingest-doc-id').value.trim()) {
+      document.getElementById('ingest-doc-id').value = url;
+    }
+
+    showToast('URL gefetcht (' + fetchData.content.length + ' Zeichen)', 'success');
+    document.querySelector('.mode-btn[data-mode="text"]').click();
+    // Auto-ingest
+    await ingestText();
+  } catch (e) {
+    resultDiv.innerHTML = '<div class="result error">' + e.message + '</div>';
+    showToast('Fehler: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'URL fetchen & ingestieren';
+  }
+}
+
+// Retrieve chunks
+async function retrieveChunks() {
+  const btn = document.getElementById('retrieve-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Suche...';
+  const resultDiv = document.getElementById('retrieval-result');
+  resultDiv.innerHTML = '';
+
+  try {
+    const question = document.getElementById('query-text').value.trim();
+    if (!question) { showToast('Bitte Frage eingeben', 'error'); btn.disabled = false; btn.textContent = 'Nur Retrieval'; return; }
+    const topK = parseInt(document.getElementById('query-topk').value) || 5;
+
+    const res = await fetch(API_BASE + '/api/v1/rag/retrieve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey('query') },
+      body: JSON.stringify({ query: question, topK })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    if (!Array.isArray(data) || data.length === 0) {
+      resultDiv.innerHTML = '<div class="result">Keine Chunks gefunden.</div>';
+      showToast('Keine Ergebnisse', 'info');
+      return;
+    }
+
+    let html = '<div style="margin-bottom:8px;font-size:.85rem;color:#666">' + data.length + ' Chunks gefunden</div>';
+    data.forEach((chunk, i) => {
+      html += '<div class="chunk-card">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:start">';
+      html += '<span class="chunk-title">#' + (i+1) + ' ' + escapeHtml(chunk.title || chunk.docId || '') + '</span>';
+      html += '</div>';
+      html += '<div class="chunk-id">ID: ' + (chunk.id || '') + '</div>';
+      html += '<div class="chunk-id">DocId: ' + (chunk.docId || '') + '</div>';
+      if (chunk.contextualText && chunk.contextualText !== chunk.text) {
+        html += '<div class="chunk-text"><strong>Kontextualisiert:</strong> ' + escapeHtml(chunk.contextualText) + '</div>';
+      }
+      html += '<div class="chunk-text">' + escapeHtml(chunk.text || '') + '</div>';
+      html += '</div>';
+    });
+    resultDiv.innerHTML = html;
+    showToast(data.length + ' Chunks abgerufen', 'success');
+  } catch (e) {
+    resultDiv.innerHTML = '<div class="result error">' + e.message + '</div>';
+    showToast('Fehler: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Nur Retrieval';
+  }
+}
+
+// Full query
+async function queryFull() {
+  const btn = document.getElementById('query-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Frage wird verarbeitet...';
+  const resultDiv = document.getElementById('retrieval-result');
+  resultDiv.innerHTML = '';
+
+  try {
+    const question = document.getElementById('query-text').value.trim();
+    if (!question) { showToast('Bitte Frage eingeben', 'error'); btn.disabled = false; btn.textContent = 'Vollständige Anfrage'; return; }
+
+    const res = await fetch(API_BASE + '/api/v1/rag/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey('query') },
+      body: JSON.stringify({ question })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    let html = '';
+    const abstained = data.abstained;
+    html += '<div class="answer-block' + (abstained ? ' abstained' : '') + '">';
+    html += '<strong>' + (abstained ? 'Keine Antwort' : 'Antwort') + ':</strong><br>';
+    html += escapeHtml(data.answer);
+    html += '</div>';
+
+    if (data.citations && data.citations.length > 0) {
+      html += '<div style="margin-top:8px"><strong>Zitate:</strong> ';
+      data.citations.forEach(c => { html += '<span class="citation-tag">' + c + '</span>'; });
+      html += '</div>';
+    }
+
+    if (data.verification && data.verification.length > 0) {
+      data.verification.forEach((v, i) => {
+        html += '<div style="margin-top:8px;font-size:.85rem">';
+        html += 'Verifizierung ' + (i+1) + ': ';
+        html += v.isFaithful ? '<span class="verdict-pass">BESTANDEN</span>' : '<span class="verdict-fail">FEHLGESCHLAGEN</span>';
+        if (v.claimScores && v.claimScores.length > 0) {
+          html += ' | Scores: [' + v.claimScores.join(', ') + ']';
+        }
+        if (v.unverifiedClaims && v.unverifiedClaims.length > 0) {
+          html += '<br><strong>Nicht verifiziert:</strong><ul>';
+          v.unverifiedClaims.forEach(c => { html += '<li>' + escapeHtml(c) + '</li>'; });
+          html += '</ul>';
+        }
+        html += '</div>';
+      });
+    }
+
+    html += '<div class="result">' + JSON.stringify(data, null, 2) + '</div>';
+    resultDiv.innerHTML = html;
+    showToast(abstained ? 'Keine Antwort gefunden' : 'Antwort erhalten', abstained ? 'info' : 'success');
+  } catch (e) {
+    resultDiv.innerHTML = '<div class="result error">' + e.message + '</div>';
+    showToast('Fehler: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Vollständige Anfrage';
+  }
+}
+
+let _graphNetwork = null;
+
+async function graphQuery() {
+  const btn = document.getElementById('graph-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Durchsuche Graph...';
+  const resultDiv = document.getElementById('graph-result');
+  const container = document.getElementById('graph-container');
+  resultDiv.innerHTML = '';
+
+  try {
+    const question = document.getElementById('graph-question').value.trim();
+    if (!question) { showToast('Bitte Frage eingeben', 'error'); btn.disabled = false; btn.textContent = 'Graph Query'; return; }
+    const hops = parseInt(document.getElementById('graph-hops').value) || 2;
+    const maxNodes = parseInt(document.getElementById('graph-max-nodes').value) || 30;
+
+    const res = await fetch(API_BASE + '/api/v1/rag/graph-query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey('graph') },
+      body: JSON.stringify({ question, hops, maxNodes })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    drawGraph(data.nodes || [], data.edges || []);
+    resultDiv.innerHTML = '<div class="result">' + JSON.stringify(data, null, 2) + '</div>';
+    showToast('Graph: ' + (data.nodes || []).length + ' Knoten, ' + (data.edges || []).length + ' Kanten', 'success');
+  } catch (e) {
+    container.innerHTML = '';
+    resultDiv.innerHTML = '<div class="result error">' + e.message + '</div>';
+    showToast('Fehler: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Graph Query';
+  }
+}
+
+function drawGraph(nodes, edges) {
+  const container = document.getElementById('graph-container');
+
+  if (_graphNetwork) { _graphNetwork.destroy(); _graphNetwork = null; }
+
+  if (!nodes || nodes.length === 0) {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:#888;">Keine Knoten gefunden</div>';
+    return;
+  }
+
+  const visNodes = nodes.map(n => ({
+    id: n.id,
+    label: n.entityName || n.id.substring(0, 20),
+    title: (n.entityName || '') + (n.description ? '\n' + n.description : ''),
+    shape: 'dot',
+    size: 22,
+    font: { size: 13 }
+  }));
+
+  const labelCount = {};
+  const visEdges = edges.map(e => {
+    const baseLabel = e.relationType;
+    labelCount[baseLabel] = (labelCount[baseLabel] || 0) + 1;
+    return {
+      id: e.id,
+      from: e.sourceNodeId,
+      to: e.targetNodeId,
+      label: baseLabel,
+      title: e.description || baseLabel,
+      arrows: 'to',
+      font: { size: 10, align: 'middle', strokeWidth: 2, strokeColor: '#fff' },
+      width: 1.5,
+      smooth: { type: 'curvedCW', roundness: 0.15 }
+    };
+  });
+
+  const colors = ['#1565c0', '#2e7d32', '#e65100', '#6a1b9a', '#c62828', '#00695c', '#283593', '#ef6c00'];
+  visNodes.forEach((n, i) => {
+    n.color = {
+      background: colors[i % colors.length],
+      border: '#333',
+      highlight: { background: '#fff', border: colors[i % colors.length] }
+    };
+    n.borderWidth = 2;
+    n.borderWidthSelected = 3;
+  });
+
+  const data = { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) };
+  const options = {
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -40, springLength: 180, springConstant: 0.03, damping: 0.5 }
+    },
+    edges: { smooth: true },
+    interaction: { hover: true, tooltipDelay: 150, zoomView: true, dragView: true, dragNodes: true },
+    nodes: { borderWidth: 2, borderWidthSelected: 3 },
+    layout: { improvedLayout: true }
+  };
+
+  _graphNetwork = new vis.Network(container, data, options);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>
