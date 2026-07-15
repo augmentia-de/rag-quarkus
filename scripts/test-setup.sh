@@ -79,12 +79,12 @@ if ! $NO_CHECK; then
     # ------------------------------------------------------------------
     if curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
         ok "Ollama running at ${OLLAMA_URL}"
-        if curl -sf "${OLLAMA_URL}/api/tags" | jq -e ".models[] | select(.name == \"${CHAT_MODEL}\")" >/dev/null 2>&1; then
-            ok "Chat model '${CHAT_MODEL}' available"
-        else
-            warn "Chat model '${CHAT_MODEL}' not found — pulling..."
-            ollama pull "${CHAT_MODEL}"
-        fi
+    #    if curl -sf "${OLLAMA_URL}/api/tags" | jq -e ".models[] | select(.name == \"${CHAT_MODEL}\")" >/dev/null 2>&1; then
+    #        ok "Chat model '${CHAT_MODEL}' available"
+    #    else
+    #        warn "Chat model '${CHAT_MODEL}' not found — pulling..."
+    #        ollama pull "${CHAT_MODEL}"
+    #    fi
         if curl -sf "${OLLAMA_URL}/api/tags" | jq -e ".models[] | select(.name == \"${EMBEDDING_MODEL}\")" >/dev/null 2>&1; then
             ok "Embedding model '${EMBEDDING_MODEL}' available"
         else

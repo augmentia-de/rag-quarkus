@@ -9,6 +9,12 @@ import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
 import org.eclipse.microprofile.faulttolerance.Retry;
 import org.eclipse.microprofile.faulttolerance.Timeout;
 
+/**
+ * LLM service that scores faithfulness of a claim against context.
+ *
+ * <p>Returns a numeric string in [0.0, 1.0] where 1.0 = fully supported,
+ * 0.0 = contradicts or not mentioned. Fault tolerant: 15s timeout, 1 retry, circuit breaker.
+ */
 @Singleton
 @RegisterAiService
 public interface JudgeAiService {

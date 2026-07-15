@@ -1,5 +1,6 @@
 package de.augmentia.rag.repository;
 
+import de.augmentia.rag.util.VectorUtils;
 import io.quarkus.hibernate.orm.panache.PanacheRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.persistence.EntityManager;
@@ -19,28 +20,28 @@ public class GraphNodeRepository implements PanacheRepository<GraphNodeEntity> {
     public Optional<GraphNodeEntity> findByEntityName(String entityName) {
         log.debugv("graphNodeRepo: findByEntityName('{0}')", entityName);
         var result = find("LOWER(entityName) = LOWER(?1)", entityName).firstResultOptional();
-        log.debugv("graphNodeRepo: findByEntityName('{0}') → found={1}", entityName, result.isPresent());
+        log.debugv("graphNodeRepo: findByEntityName('{0}') -> found={1}", entityName, result.isPresent());
         return result;
     }
 
     public List<GraphNodeEntity> findByEntityNameIn(List<String> names) {
         log.debugv("graphNodeRepo: findByEntityNameIn({0})", names);
         var result = find("LOWER(entityName) IN (?1)", names.stream().map(String::toLowerCase).toList()).list();
-        log.debugv("graphNodeRepo: findByEntityNameIn({0}) → {1} results", names, result.size());
+        log.debugv("graphNodeRepo: findByEntityNameIn({0}) -> {1} results", names, result.size());
         return result;
     }
 
     public List<GraphNodeEntity> findByChunkId(String chunkId) {
         log.debugv("graphNodeRepo: findByChunkId('{0}')", chunkId);
         var result = find("chunkId", chunkId).list();
-        log.debugv("graphNodeRepo: findByChunkId('{0}') → {1} results", chunkId, result.size());
+        log.debugv("graphNodeRepo: findByChunkId('{0}') -> {1} results", chunkId, result.size());
         return result;
     }
 
     @SuppressWarnings("unchecked")
     public List<Object[]> searchByEmbedding(float[] queryVec, int limit) {
         long t0 = System.nanoTime();
-        String vecStr = GraphNodeEntity.vectorToString(queryVec);
+        String vecStr = VectorUtils.vectorToString(queryVec);
         var result = em.createNativeQuery(
             "SELECT id, entity_name, entity_type, description, chunk_id, " +
             "1 - (embedding <=> CAST(:vec AS vector)) AS score " +
@@ -49,7 +50,7 @@ public class GraphNodeRepository implements PanacheRepository<GraphNodeEntity> {
             .setParameter("vec", vecStr)
             .setParameter("limit", limit)
             .getResultList();
-        log.debugv("graphNodeRepo: searchByEmbedding(limit={0}) → {1} results in {2}ms",
+        log.debugv("graphNodeRepo: searchByEmbedding(limit={0}) -> {1} results in {2}ms",
             limit, result.size(), (System.nanoTime() - t0) / 1_000_000);
         return result;
     }

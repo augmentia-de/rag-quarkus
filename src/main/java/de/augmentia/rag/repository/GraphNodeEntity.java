@@ -1,6 +1,7 @@
 package de.augmentia.rag.repository;
 
 import de.augmentia.rag.domain.GraphNode;
+import de.augmentia.rag.util.VectorUtils;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -55,15 +56,5 @@ public class GraphNodeEntity {
 
     public GraphNode toDomain() {
         return new GraphNode(id, chunkId, entityName, entityType, description, null, createdAt);
-    }
-
-    public static String vectorToString(float[] vec) {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < vec.length; i++) {
-            if (i > 0) sb.append(",");
-            sb.append(vec[i]);
-        }
-        sb.append("]");
-        return sb.toString();
     }
 }

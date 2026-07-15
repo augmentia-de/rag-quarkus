@@ -7,17 +7,29 @@ import org.jboss.logging.Logger;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Reciprocal Rank Fusion (Cormack et al. 2009) — combines result lists from
+ * heterogeneous retrieval sources (dense + sparse) by summing {@code 1/(k + rank + 1)}.
+ *
+ * <p>Both input lists must be pre-sorted by descending relevance.
+ * Returns all fused document IDs sorted by combined RRF score.
+ */
 @ApplicationScoped
 public class ReciprocalRankFusion {
 
     private static final Logger log = Logger.getLogger(ReciprocalRankFusion.class);
 
+    /** Standard smoothing constant from the original paper. */
     static final int DEFAULT_K = 60;
 
     public List<String> fuse(List<SearchResult> denseResults, List<SearchResult> sparseResults) {
         return fuse(denseResults, sparseResults, DEFAULT_K);
     }
 
+    /**
+     * Fuses dense and sparse result lists using RRF scoring.
+     * Each document gets score = sum(1 / (k + rank + 1)) across both lists.
+     */
     public List<String> fuse(List<SearchResult> denseResults, List<SearchResult> sparseResults, int k) {
         Map<String, Double> scores = new HashMap<>();
 

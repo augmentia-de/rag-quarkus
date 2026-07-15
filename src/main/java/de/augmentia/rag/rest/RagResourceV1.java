@@ -42,14 +42,14 @@ public class RagResourceV1 {
     @POST
     @Path("/retrieve")
     @Operation(summary = "Retrieve top-K chunks for a query",
-               description = "Returns the top-K retrieved chunks without generating an answer")
-    @APIResponse(responseCode = "200", description = "Retrieved chunks")
+               description = "Returns the top-K retrieved chunks with similarity scores")
+    @APIResponse(responseCode = "200", description = "Retrieved chunks with scores")
     @APIResponse(responseCode = "400", description = "Invalid input")
     @APIResponse(responseCode = "401", description = "Missing or invalid API key")
     public Response retrieve(@Valid @RequestBody(required = true) RagRetrieveRequest request) {
         log.debugv("retrieve: query='{0}' topK={1}", request.query(), request.topK());
         try {
-            var chunks = ragEngine.retrieve(request.query(), request.topK());
+            var chunks = ragEngine.retrieveWithScores(request.query(), request.topK());
             log.debugv("retrieve: returned {0} chunks for query='{1}'", chunks.size(), request.query());
             return Response.ok(chunks).build();
         } catch (Exception e) {
@@ -142,7 +142,7 @@ public class RagResourceV1 {
         log.debugv("ingest: {0} documents received", request.documents().size());
         try {
             var chunks = request.documents().stream()
-                .map(d -> new Chunk(d.id(), d.docId(), d.title(), d.text(), d.text(), List.of()))
+                .map(d -> new Chunk(d.id(), d.docId(), d.title(), d.text(), null, List.of()))
                 .toList();
             UUID jobId = ingestionPipeline.submitForIngestion(chunks);
             log.debugv("ingest: job {0} submitted for {1} documents", jobId, chunks.size());
@@ -204,10 +204,15 @@ public class RagResourceV1 {
     ) {}
 
     public record IngestRequest(
-        @Valid List<DocDto> documents
+        @Size(max = 100) List<@Valid DocDto> documents
     ) {}
 
-    public record DocDto(String id, String docId, String title, String text) {}
+    public record DocDto(
+        @NotBlank String id,
+        @NotBlank String docId,
+        @NotBlank String title,
+        @NotBlank @Size(max = 1_048_576) String text
+    ) {}
     public record IngestionResponse(java.util.UUID jobId, String message) {}
 
     public record DocumentRequest(

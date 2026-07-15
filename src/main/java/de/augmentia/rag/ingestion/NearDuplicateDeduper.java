@@ -55,10 +55,13 @@ public class NearDuplicateDeduper {
 
     private List<String> shingle(String text) {
         if (text == null || text.isBlank()) return List.of();
-        String cleaned = text.toLowerCase().replaceAll("\\s+", " ");
+        String cleaned = text.toLowerCase().replaceAll("[^a-z0-9äöüß\\s]", "").trim();
+        String[] tokens = cleaned.split("\\s+");
+        if (tokens.length < 3) return List.of(cleaned);
+
         List<String> shingles = new ArrayList<>();
-        for (int i = 0; i <= cleaned.length() - 3; i++) {
-            shingles.add(cleaned.substring(i, i + 3));
+        for (int i = 0; i <= tokens.length - 3; i++) {
+            shingles.add(tokens[i] + " " + tokens[i + 1] + " " + tokens[i + 2]);
         }
         return shingles;
     }

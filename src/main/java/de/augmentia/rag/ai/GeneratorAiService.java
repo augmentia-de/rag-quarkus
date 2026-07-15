@@ -9,6 +9,12 @@ import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
 import org.eclipse.microprofile.faulttolerance.Retry;
 import org.eclipse.microprofile.faulttolerance.Timeout;
 
+/**
+ * LLM service that generates cited answers from retrieved context.
+ *
+ * <p>Contract: every sentence must end with [ID: xx] citation. If context is
+ * insufficient, returns "ABSTAIN". Fault tolerant: 30s timeout, 2 retries, circuit breaker.
+ */
 @RequestScoped
 @RegisterAiService
 public interface GeneratorAiService {

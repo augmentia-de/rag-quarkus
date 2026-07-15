@@ -1,0 +1,33 @@
+Quantum Computing: Principles and Applications
+
+Quantum computing is a type of computation that harnesses quantum mechanical phenomena such as superposition and entanglement to process information in fundamentally new ways.
+
+The theoretical foundation of quantum computing was laid by Richard Feynman in 1982, when he proposed that a quantum system could simulate physics more efficiently than a classical computer. David Deutsch at Oxford University formalized the concept of a universal quantum computer in 1985.
+
+A quantum bit, or qubit, is the basic unit of quantum information. Unlike classical bits which are either 0 or 1, qubits can exist in a superposition of both states simultaneously. This property allows quantum computers to process many possible inputs at once.
+
+Quantum entanglement, famously called "spooky action at a distance" by Albert Einstein, is a phenomenon where two qubits become correlated such that the state of one instantly influences the state of the other, regardless of distance. Entanglement is a key resource for quantum computation and quantum communication.
+
+Peter Shor developed his famous algorithm in 1994, which can factor large integers exponentially faster than the best known classical algorithm. Shor's algorithm poses a threat to RSA encryption, which relies on the difficulty of factoring large numbers.
+
+Lov Grover developed a quantum search algorithm in 1996 that can search an unsorted database of N items in O(√N) time, providing a quadratic speedup over classical search.
+
+Major companies investing in quantum computing include IBM, Google, Microsoft, Amazon, and several startups. IBM launched its Quantum Network in 2019, providing cloud access to quantum computers. IBM's roadmap targets building a 100,000-qubit quantum computer by 2033.
+
+Google claimed quantum supremacy in 2019 when its Sycamore processor, with 53 qubits, completed a specific calculation in 200 seconds that would take the world's most powerful classical supercomputer approximately 10,000 years. This result was published in Nature and authored by Frank Arute and colleagues.
+
+IBM responded to Google's quantum supremacy claim by demonstrating that classical supercomputers could simulate the same problem in a much shorter time than originally claimed, highlighting the nuanced nature of quantum advantage benchmarks.
+
+IonQ, founded by Christopher Monroe and Jung-Sang Kim in 2015, uses trapped ion technology for quantum computing. Their systems achieve high fidelity gates and long coherence times. IonQ went public in 2021 through a SPAC merger.
+
+Rigetti Computing, founded by Chad Rigetti in 2013, develops superconducting quantum processors. The company operates hybrid quantum-classical cloud computing services.
+
+PsiQuantum, founded by Jeremy O'Brien in 2016, is pursuing a photonic approach to quantum computing, using particles of light rather than superconducting circuits or trapped ions. The company aims to build a million-qubit fault-tolerant quantum computer.
+
+Quantum error correction is one of the biggest challenges in the field. Current quantum computers are noisy and prone to errors. Quantum error correction requires many physical qubits to create one logical qubit. The overhead for error correction remains a significant engineering challenge.
+
+Quantum key distribution (QKD) is a secure communication method that uses quantum mechanics to guarantee secure key exchange. China's Micius satellite, launched in 2016, demonstrated intercontinental QKD between Beijing and Vienna.
+
+Quantum machine learning is an emerging field that combines quantum computing with machine learning. Quantum neural networks and quantum kernel methods are areas of active research that could potentially provide advantages over classical machine learning approaches.
+
+Post-quantum cryptography refers to cryptographic algorithms that are believed to be secure against attacks by quantum computers. NIST standardized several post-quantum cryptographic algorithms in 2024, including CRYSTALS-Kyber for key encapsulation and CRYSTALS-Dilithium for digital signatures.

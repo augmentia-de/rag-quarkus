@@ -15,4 +15,12 @@ public class ChunkRepository implements PanacheRepository<ChunkEntity> {
     public long countByDocId(String docId) {
         return count("docId", docId);
     }
+
+    public long countNotGraphExtractedByDocIds(java.util.Collection<String> docIds) {
+        return count("docId IN ?1 AND graphExtracted = false", java.util.List.copyOf(docIds));
+    }
+
+    public java.util.List<ChunkEntity> findByDocIdsNotGraphExtracted(java.util.Collection<String> docIds) {
+        return find("docId IN ?1 AND graphExtracted = false", java.util.List.copyOf(docIds)).list();
+    }
 }

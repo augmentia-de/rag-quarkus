@@ -2,6 +2,7 @@ package de.augmentia.rag.ingestion;
 
 import de.augmentia.rag.domain.Chunk;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
@@ -12,10 +13,15 @@ import java.util.UUID;
 public class StructureAwareChunker {
 
     private static final Logger log = Logger.getLogger(StructureAwareChunker.class);
-    private static final int TARGET_TOKENS = 256;
-    private static final int OVERLAP = 32;
+    private static final int DEFAULT_TARGET_TOKENS = 256;
+    private static final int DEFAULT_OVERLAP = 32;
+
+    @Inject
+    de.augmentia.rag.config.RagConfig config;
 
     public List<Chunk> chunk(Chunk source) {
+        int targetTokens = config != null ? config.chunk().targetTokens() : DEFAULT_TARGET_TOKENS;
+        int overlap = config != null ? config.chunk().overlap() : DEFAULT_OVERLAP;
         String[] sentences = splitSentences(source.text());
         if (sentences.length == 0) {
             sentences = new String[]{source.text()};
@@ -29,10 +35,10 @@ public class StructureAwareChunker {
         for (String sentence : sentences) {
             int tokenCount = estimateTokens(sentence);
 
-            if (!current.isEmpty() && currentTokens + tokenCount > TARGET_TOKENS) {
+            if (!current.isEmpty() && currentTokens + tokenCount > targetTokens) {
                 chunks.add(buildChunk(source, current));
 
-                if (OVERLAP > 0 && !current.isEmpty()) {
+                if (overlap > 0 && !current.isEmpty()) {
                     String lastSentence = current.getLast();
                     current = new ArrayList<>(List.of(lastSentence));
                     currentTokens = estimateTokens(lastSentence);

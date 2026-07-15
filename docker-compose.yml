@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: rag
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/main/resources/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  llm:
+    image: vllm/vllm-openai:latest
+    command:
+      - "--model"
+      - "Qwen/Qwen3-32B"
+      - "--api-key"
+      - "none"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "8192"
+      - "--gpu-memory-utilization"
+      - "0.90"
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - model-cache:/root/.cache/huggingface
+
+  rag-engine:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      QUARKUS_PROFILE: prod
+      RAG_LLM_ENDPOINT: http://llm:8000/v1
+      RAG_EMBEDDING_ENDPOINT: http://llm:8000/v1
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/rag
+      RAG_AUTH_API_KEY: change-me-in-production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      llm:
+        condition: service_started
+
+volumes:
+  pgdata:
+  model-cache:

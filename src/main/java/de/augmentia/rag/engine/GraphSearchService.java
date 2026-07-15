@@ -19,6 +19,12 @@ import org.jboss.logging.Logger;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Graph search: entity extraction → seed matching → CTE BFS traversal → chunk resolution.
+ *
+ * <p>Extracts entities from the query, embeds them, finds seed nodes via vector search,
+ * traverses the graph via recursive CTE, and resolves connected chunks.
+ */
 @ApplicationScoped
 public class GraphSearchService {
 
@@ -30,6 +36,14 @@ public class GraphSearchService {
     @Inject ChunkRepository chunkRepo;
     @Inject EmbeddingModelClient embeddingClient;
 
+    /**
+     * Searches the knowledge graph for entities related to the question.
+     *
+     * @param question user query
+     * @param hops number of traversal hops from seed nodes
+     * @param maxNodes max nodes to return
+     * @return graph nodes, edges, and resolved context chunks
+     */
     public GraphSearchResult search(String question, int hops, int maxNodes) {
         long start = System.nanoTime();
 
@@ -73,16 +87,18 @@ public class GraphSearchService {
 
         log.debugv("graphSearch: CTE returned {0} connected node ids", connectedIds.size());
 
-        connectedIds.forEach(id -> nodeById.computeIfAbsent(id, k -> {
-            GraphNodeEntity entity = graphNodeRepo.find("id", k).firstResult();
-            if (entity != null) {
-                return new GraphNode(
+        Set<String> missingIds = new LinkedHashSet<>(connectedIds);
+        missingIds.removeAll(nodeById.keySet());
+        if (!missingIds.isEmpty()) {
+            log.debugv("graphSearch: loading {0} nodes from DB", missingIds.size());
+            List<GraphNodeEntity> entities = graphNodeRepo.find("id IN ?1", List.copyOf(missingIds)).list();
+            for (GraphNodeEntity entity : entities) {
+                nodeById.put(entity.id, new GraphNode(
                     entity.id, entity.chunkId, entity.entityName,
                     entity.entityType, entity.description, null, entity.createdAt
-                );
+                ));
             }
-            return null;
-        }));
+        }
 
         List<GraphEdge> relevantEdges = graphEdgeRepo.findEdgesBetweenNodes(connectedIds).stream()
             .map(GraphEdgeEntity::toDomain)

@@ -8,6 +8,7 @@ import de.augmentia.rag.domain.*;
 import de.augmentia.rag.repository.ChunkEntity;
 import de.augmentia.rag.repository.ChunkRepository;
 import de.augmentia.rag.repository.FullTextSearchRepository;
+import de.augmentia.rag.repository.SearchResult;
 import de.augmentia.rag.repository.VectorSearchRepository;
 import io.quarkus.cache.CacheResult;
 import io.smallrye.mutiny.Uni;
@@ -18,6 +19,16 @@ import org.jboss.logging.Logger;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Core RAG engine implementing the defensively grounded pipeline.
+ *
+ * <p>Pipeline flow: route → retrieve → graph-augment → generate → decompose-claims → verify → CRAG-loop.
+ * Returns ABSTAIN when confidence is too low or verification fails after all hops.
+ *
+ * @see ReciprocalRankFusion
+ * @see CrossEncoderReranker
+ * @see FaithfulnessJudge
+ */
 @ApplicationScoped
 public class DefensivelyGroundedRagEngine {
 
@@ -35,11 +46,22 @@ public class DefensivelyGroundedRagEngine {
     @Inject EmbeddingModelClient embeddingClient;
     @Inject RagConfig config;
     @Inject GraphSearchService graphSearchService;
+    @Inject de.augmentia.rag.ai.LlmLogger llmLogger;
 
+    /**
+     * Wraps pipeline execution in a Uni for async/non-blocking use.
+     */
     public Uni<RagResponse> processQuery(RagQuery query) {
         return Uni.createFrom().item(() -> executePipeline(query));
     }
 
+    /**
+     * Core pipeline: route → retrieve → graph-augment → generate → verify → CRAG-loop.
+     *
+     * <p>Returns ABSTAIN when: no context found, generator abstains, or verification
+     * fails after max CRAG hops. Graph augmentation adds chunks from connected entities
+     * when enabled.
+     */
     RagResponse executePipeline(RagQuery query) {
         log.debugv("Processing query: {0}", query.question());
         long start = System.nanoTime();
@@ -111,36 +133,62 @@ public class DefensivelyGroundedRagEngine {
         return retrieve(routed);
     }
 
+    public List<ScoredChunk> retrieveWithScores(String query, int topK) {
+        var routed = queryRouter.route(new RagQuery(query, null, topK, true));
+        return retrieveWithScores(routed);
+    }
+
     public GraphSearchResult processGraphQuery(String question, int hops, int maxNodes) {
         return graphSearchService.search(question, hops, maxNodes);
     }
 
     @CacheResult(cacheName = "rag-retrieval")
     List<Chunk> retrieve(QueryRouter.RoutedQuery routed) {
-        Set<String> seen = new LinkedHashSet<>();
+        return retrieveWithScores(routed).stream()
+            .map(sc -> new Chunk(sc.id(), sc.docId(), sc.title(), sc.text(), sc.contextualText(), List.of()))
+            .toList();
+    }
+
+    List<ScoredChunk> retrieveWithScores(QueryRouter.RoutedQuery routed) {
+        Map<String, Double> scoreMap = new LinkedHashMap<>();
         long start = System.nanoTime();
 
-        log.debugv("retrieve: starting with {0} sub-questions: {1}",
-            routed.subQuestions().size(), routed.subQuestions());
+        int totalChunks = (int) chunkRepo.count();
+        int effectiveTopK = Math.min(config.retrieve().topK(), Math.max(1, totalChunks));
+
+        log.debugv("retrieve: starting with {0} sub-questions, totalChunks={1}, effectiveTopK={2}",
+            routed.subQuestions().size(), totalChunks, effectiveTopK);
 
         for (String subQ : routed.subQuestions()) {
             log.debugv("retrieve: processing sub-question '{0}'", subQ);
             float[] queryVec = embeddingClient.embed(subQ);
 
-            var denseResults = vectorStore.search(queryVec, config.retrieve().topK());
-            var sparseResults = fullTextStore.search(subQ, config.retrieve().topK());
+            var denseResults = vectorStore.search(queryVec, effectiveTopK);
+            var sparseResults = fullTextStore.search(subQ, effectiveTopK);
+
+            double maxDense = denseResults.stream()
+                .mapToDouble(SearchResult::getScore).max().orElse(0.0);
+            double threshold = maxDense * config.retrieve().similarityRatio();
+            denseResults = denseResults.stream()
+                .filter(r -> r.getScore() >= threshold).toList();
+            log.debugv("retrieve: dense threshold={0} (max={1}, ratio={2}), filtered={3}",
+                String.format("%.4f", threshold), String.format("%.4f", maxDense),
+                config.retrieve().similarityRatio(), denseResults.size());
+
+            for (SearchResult sr : denseResults) {
+                scoreMap.merge(sr.getChunkId(), (double) sr.getScore(), Math::max);
+            }
 
             List<String> fusedIds = rrf.fuse(denseResults, sparseResults, config.retrieve().rrfK());
-            log.debugv("retrieve: sub-question '{0}' → dense={1} sparse={2} fused={3} unique={4}",
-                subQ, denseResults.size(), sparseResults.size(), fusedIds.size(), seen.size() + fusedIds.size());
-            seen.addAll(fusedIds);
+            log.debugv("retrieve: sub-question '{0}' → dense={1} sparse={2} fused={3}",
+                subQ, denseResults.size(), sparseResults.size(), fusedIds.size());
         }
 
-        List<Chunk> candidates = seen.stream()
+        List<Chunk> candidates = scoreMap.keySet().stream()
             .map(id -> chunkRepo.findById(id).map(ChunkEntity::toDomain).orElse(null))
             .filter(Objects::nonNull)
             .toList();
-        log.debugv("retrieve: fetched {0}/{1} candidates from DB", candidates.size(), seen.size());
+        log.debugv("retrieve: fetched {0} candidates from DB", candidates.size());
 
         if (routed.type() == QuestionType.COMPARISON) {
             int before = candidates.size();
@@ -148,7 +196,13 @@ public class DefensivelyGroundedRagEngine {
             log.debugv("retrieve: comparison dedup {0} → {1}", before, candidates.size());
         }
 
-        List<Chunk> result = reranker.rerank(routed.original(), candidates, config.rerank().topN());
+        List<Chunk> ranked = reranker.rerank(routed.original(), candidates, config.rerank().topN());
+        Set<String> rankedIds = ranked.stream().map(Chunk::id).collect(Collectors.toSet());
+
+        List<ScoredChunk> result = ranked.stream()
+            .map(c -> new ScoredChunk(c, scoreMap.getOrDefault(c.id(), 0.0)))
+            .toList();
+
         long elapsed = (System.nanoTime() - start) / 1_000_000;
         log.debugv("retrieve: done in {0}ms — {1} candidates → {2} final chunks",
             elapsed, candidates.size(), result.size());
@@ -156,18 +210,29 @@ public class DefensivelyGroundedRagEngine {
         return result;
     }
 
+    /**
+     * Generates a cited answer from context chunks.
+     * Format: "[ID: chunk-id] sentence text" for each claim.
+     */
     String generateCitedAnswer(String question, List<Chunk> context) {
         StringBuilder contextBlock = new StringBuilder();
         for (Chunk c : context) {
             contextBlock.append(String.format("[ID: %s] %s%n%n", c.id(), c.contextualText()));
         }
-        return normalizeCitations(generator.generate(contextBlock.toString(), question));
+        String input = "CONTEXT:\n" + contextBlock + "\nQUERY: " + question;
+        llmLogger.logRequest("Generator", "generate", input);
+        String response = llmLogger.logAndExecute("Generator", () -> generator.generate(contextBlock.toString(), question));
+        return normalizeCitations(response);
     }
 
     static String normalizeCitations(String answer) {
         return answer.replace('\u3010', '[').replace('\u3011', ']');
     }
 
+    /**
+     * Corrective RAG loop: reformulate query from unverified claims, re-retrieve,
+     * re-generate, re-verify. Exits when faithfulness passes and confidence >= thresholdOk.
+     */
     RagResponse cragLoop(RagQuery query, List<Chunk> previousContext, VerificationResult failedVerification) {
         List<Chunk> allContext = new ArrayList<>(previousContext);
 
@@ -206,15 +271,24 @@ public class DefensivelyGroundedRagEngine {
         return RagResponse.abstain();
     }
 
+    /**
+     * Appends unverified claims to the original question for re-retrieval.
+     */
     private String reformulateQuery(String original, VerificationResult failed) {
         return original + " (reformulated: " + String.join("; ", failed.unverifiedClaims()) + ")";
     }
 
+    /**
+     * Heuristic: chunkCount / topN, clamped to [0, 1]. Higher when more context is available.
+     */
     private double computeConfidence(List<Chunk> context) {
         if (context.isEmpty()) return 0.0;
         return Math.min(1.0, context.size() / (double) config.rerank().topN());
     }
 
+    /**
+     * Extracts chunk IDs from [ID: xxx] or [xxx] citation brackets in the answer.
+     */
     private List<String> extractCitationIds(String answer) {
         var matcher = java.util.regex.Pattern.compile("\\[([^\\]]+)\\]").matcher(answer);
         List<String> ids = new ArrayList<>();

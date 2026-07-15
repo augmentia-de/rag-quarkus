@@ -48,7 +48,7 @@ curl http://localhost:11434/api/tags # Ollama on port 11434
 ./scripts/test-ingest.sh
 
 # 4. Query
-curl -X POST http://localhost:8080/api/v1/rag/query \
+curl -X POST http://localhost:8086/api/v1/rag/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: dev-key-change-me" \
   -d '{"question":"Who directed Doctor Strange?"}'

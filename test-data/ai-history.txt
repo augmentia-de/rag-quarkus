@@ -1,0 +1,29 @@
+Artificial Intelligence: A Brief History
+
+Artificial intelligence was founded as an academic discipline in 1956 by John McCarthy, Marvin Minsky, Allen Newell, and Herbert Simon at the Dartmouth Conference. The field has gone through several waves of enthusiasm and disappointment, known as AI winters.
+
+In the 1950s and 1960s, early AI programs like ELIZA, created by Joseph Weizenbaum at MIT in 1966, demonstrated natural language processing. ELIZA simulated a Rogerian psychotherapist by pattern-matching user inputs to scripted responses.
+
+The expert systems of the 1970s and 1980s represented the first commercial success of AI. MYCIN, developed at Stanford University by Edward Shortliffe in 1976, used approximately 600 rules to diagnose bacterial infections and recommend antibiotics. It achieved accuracy comparable to human doctors.
+
+Neural networks experienced a renaissance in the 1980s with the development of backpropagation by David Rumelhart, Geoffrey Hinton, and Ronald Williams in 1986. This algorithm allowed multilayer networks to be trained effectively.
+
+The modern deep learning era began in 2012 when Alex Krizhevsky, Ilya Sutskever, and Geoffrey Hinton won the ImageNet competition with their convolutional neural network AlexNet, which reduced the error rate from 26% to 15.3%.
+
+Google DeepMind's AlphaGo, created by Demis Hassabis and David Silver, defeated world Go champion Lee Sedol in March 2016, marking a major milestone in AI capability. Go was considered a grand challenge for AI because of its enormous search space.
+
+In 2017, the transformer architecture was introduced by Vaswani et al. at Google in the paper "Attention Is All You Need." This architecture replaced recurrent neural networks with self-attention mechanisms and became the foundation for modern language models.
+
+OpenAI released GPT-3 in June 2020, a language model with 175 billion parameters that demonstrated remarkable few-shot learning capabilities. GPT-3 showed that large language models could perform many NLP tasks without task-specific training.
+
+ChatGPT, launched by OpenAI in November 2022, became the fastest-growing consumer application in history, reaching 100 million users within two months. It was built on the GPT-3.5 model and fine-tuned using reinforcement learning from human feedback (RLHF).
+
+Anthropic was founded in 2021 by Dario Amodei and Daniela Amodei, former members of OpenAI, with a focus on AI safety. Their Claude language model emphasizes being helpful, harmless, and honest.
+
+Google's Bard, later renamed Gemini, was announced in February 2023 as a competitor to ChatGPT. Google developed the PaLM 2 language model to power its conversational AI offerings.
+
+Meta AI released LLaMA (Large Language Model Meta AI) in February 2023, and subsequently made it open source. LLaMA demonstrated that smaller, more efficient models could compete with much larger proprietary systems.
+
+The development of AI is closely tied to advances in hardware. NVIDIA's GPUs, particularly the A100 and H100 chips, became the standard hardware for training large AI models. Jensen Huang, NVIDIA's CEO, has been instrumental in positioning the company for the AI revolution.
+
+Retrieval-Augmented Generation (RAG) emerged as an important technique for grounding language models in external knowledge. RAG combines the power of large language models with the ability to retrieve relevant documents from a knowledge base, reducing hallucinations and improving factual accuracy.

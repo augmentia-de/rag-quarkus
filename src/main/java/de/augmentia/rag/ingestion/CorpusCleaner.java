@@ -11,6 +11,7 @@ public class CorpusCleaner {
     private static final Logger log = Logger.getLogger(CorpusCleaner.class);
 
     public String normalize(String text) {
+        if (text == null) return null;
         int lenBefore = text.length();
         String s = Normalizer.normalize(text, Normalizer.Form.NFKC);
         s = s.replace("\u00AD", "");

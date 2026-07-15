@@ -35,6 +35,9 @@ public class ChunkEntity {
     @Column(name = "gold_for_qids", columnDefinition = "TEXT")
     public String goldForQuestionIds;
 
+    @Column(name = "graph_extracted")
+    public boolean graphExtracted;
+
     public static ChunkEntity fromDomain(Chunk chunk) {
         var e = new ChunkEntity();
         e.id = chunk.id();

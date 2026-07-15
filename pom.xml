@@ -25,10 +25,8 @@
         <quarkus.platform.version>3.36.3</quarkus.platform.version>
         <quarkus.langchain4j.version>1.11.2</quarkus.langchain4j.version>
         <surefire-plugin.version>3.5.6</surefire-plugin.version>
-        <sonar.projectKey>piomin_quarkus-ai-apps</sonar.projectKey>
-        <sonar.organization>piomin</sonar.organization>
-        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
         <testcontainers.version>1.20.4</testcontainers.version>
+        <wiremock.version>3.6.0</wiremock.version>
     </properties>
 
     <dependencyManagement>
@@ -211,6 +209,13 @@
                 </executions>
             </plugin>
             <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <compilerArgument>-parameters</compilerArgument>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <version>0.8.15</version>
@@ -228,11 +233,6 @@
                         </goals>
                     </execution>
                 </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.sonarsource.scanner.maven</groupId>
-                <artifactId>sonar-maven-plugin</artifactId>
-                <version>3.11.0.3922</version>
             </plugin>
             <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>

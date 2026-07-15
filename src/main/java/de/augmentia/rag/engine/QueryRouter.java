@@ -7,11 +7,18 @@ import org.jboss.logging.Logger;
 
 import java.util.List;
 
+/**
+ * Keyword-based query classifier that routes questions to different retrieval strategies.
+ *
+ * <p>Priority chain: falsePremise → comparison → multiHop → simple.
+ * Multi-hop queries are decomposed into sub-questions.
+ */
 @ApplicationScoped
 public class QueryRouter {
 
     private static final Logger log = Logger.getLogger(QueryRouter.class);
 
+    /** Keywords indicating multi-hop reasoning is needed. */
     private static final List<String> MULTI_HOP_KEYWORDS = List.of(
         "and also", "both", "compare", "difference", "similar",
         "what about", "after that", "before", "then", "who was",
@@ -49,9 +56,11 @@ public class QueryRouter {
     }
 
     private boolean isFalsePremise(String q) {
-        return q.contains("when did") && q.contains("stop") ||
-               q.contains("why is the") && q.contains("invisible") ||
-               q.startsWith("what is the capital of atlantis");
+        return q.startsWith("what is the capital of atlantis") ||
+               q.contains("invisible") && q.startsWith("why is the") ||
+               q.contains("stop using") ||
+               q.contains("cease to exist") ||
+               q.contains("when did humans") && q.contains("stop");
     }
 
     private List<String> decomposeSubQuestions(String question) {

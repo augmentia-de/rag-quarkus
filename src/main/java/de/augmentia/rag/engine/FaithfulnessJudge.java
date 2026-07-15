@@ -1,6 +1,7 @@
 package de.augmentia.rag.engine;
 
 import de.augmentia.rag.ai.JudgeAiService;
+import de.augmentia.rag.ai.LlmLogger;
 import de.augmentia.rag.config.RagConfig;
 import de.augmentia.rag.domain.AtomicClaim;
 import de.augmentia.rag.domain.Chunk;
@@ -17,18 +18,36 @@ import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * Verifies each atomic claim against retrieved context using an LLM judge.
+ *
+ * <p>Runs evaluations in parallel on virtual threads. Claims scoring below
+ * {@code config.judge().tauClaim()} are marked as failures.
+ */
 @ApplicationScoped
 public class FaithfulnessJudge {
 
     private static final Logger log = LoggerFactory.getLogger(FaithfulnessJudge.class);
-    private final Executor executor = Executors.newVirtualThreadPerTaskExecutor();
+
+    /** Virtual-thread-per-task executor for parallel claim verification. */
+    private final java.util.concurrent.ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+
+    /** Matches "0.85" or "1.0" — extracts numeric score from LLM response. */
     private static final Pattern SCORE_PATTERN = Pattern.compile("[01](?:\\.\\d+)?");
+
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        executor.shutdownNow();
+    }
 
     @Inject
     JudgeAiService judge;
 
     @Inject
     RagConfig config;
+
+    @Inject
+    LlmLogger llmLogger;
 
     public VerificationResult verify(List<AtomicClaim> claims, List<Chunk> context) {
         String combinedContext = context.stream()
@@ -65,7 +84,9 @@ public class FaithfulnessJudge {
             return new ScoredClaim(0.0);
         }
         try {
-            String response = judge.score(context, claim.statement()).toLowerCase();
+            String input = "CONTEXT:\n" + context + "\n\nCLAIM: " + claim.statement();
+            llmLogger.logRequest("Judge", "score", input);
+            String response = llmLogger.logAndExecute("Judge", () -> judge.score(context, claim.statement())).toLowerCase();
             var matcher = SCORE_PATTERN.matcher(response);
             double score = matcher.find() ? Double.parseDouble(matcher.group()) : 0.0;
             score = Math.min(1.0, Math.max(0.0, score));
