@@ -29,11 +29,18 @@ public interface RagConfig {
         @WithDefault("20") int maxNodes();
         @WithDefault("false") boolean enabled();
         Extraction extraction();
+        EntityResolution entityResolution();
 
         /** LLM-based triple extraction during ingestion. */
         interface Extraction {
             @WithDefault("5") int maxTriplesPerChunk();
             @WithDefault("0.0") double temperature();
+        }
+
+        /** Cross-batch entity canonicalization during graph ingestion. */
+        interface EntityResolution {
+            /** Minimum pg_trgm similarity before an existing node is reused. */
+            @WithDefault("0.55") double similarityThreshold();
         }
     }
 

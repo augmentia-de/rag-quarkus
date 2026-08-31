@@ -24,7 +24,7 @@ $NO_CHECK || check_deps
 # ------------------------------------------------------------------
 # 1. Verify existing PostgreSQL container
 # ------------------------------------------------------------------
-PG_CONTAINER="postgres-vector"
+PG_CONTAINER="postgres-pgvector"
 if ! $NO_CHECK; then
     if ! docker ps --format '{{.Names}}' | grep -q "^${PG_CONTAINER}$"; then
         fail "Container '${PG_CONTAINER}' not found. Start it first."
@@ -45,8 +45,8 @@ fi
 # ------------------------------------------------------------------
 PG_HOST="localhost"
 PG_PORT="5432"
-PG_USER="user"
-PG_PASSWORD="password"
+PG_USER="postgres"
+PG_PASSWORD="postgres"
 PG_DB="rag"
 OLLAMA_URL="http://localhost:11434"
 CHAT_MODEL="${CHAT_MODEL:-qwen3.5:2b}"

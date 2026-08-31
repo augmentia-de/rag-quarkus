@@ -38,6 +38,36 @@ public class GraphNodeRepository implements PanacheRepository<GraphNodeEntity> {
         return result;
     }
 
+    /**
+     * Finds an existing entity name that is trigram-similar to the given name.
+     * Used for cross-batch entity canonicalization to avoid fragmented graph nodes.
+     *
+     * @param entityName        normalized name to look up
+     * @param similarityThreshold minimum pg_trgm similarity in [0,1]
+     * @return the stored entity_name of the best match, if above threshold
+     */
+    @SuppressWarnings("unchecked")
+    public Optional<String> findSimilarEntityName(String entityName, double similarityThreshold) {
+        log.debugv("graphNodeRepo: findSimilarEntityName('{0}', threshold={1})", entityName, similarityThreshold);
+        var result = em.createNativeQuery("""
+                SELECT entity_name
+                FROM graph_nodes
+                WHERE similarity(entity_name, :entityName) > :threshold
+                ORDER BY similarity(entity_name, :entityName) DESC, LENGTH(entity_name) ASC
+                LIMIT 1
+                """)
+            .setParameter("entityName", entityName)
+            .setParameter("threshold", similarityThreshold)
+            .getResultList();
+        if (result.isEmpty()) {
+            log.debugv("graphNodeRepo: findSimilarEntityName('{0}') -> none", entityName);
+            return Optional.empty();
+        }
+        String match = (String) result.get(0);
+        log.debugv("graphNodeRepo: findSimilarEntityName('{0}') -> '{1}'", entityName, match);
+        return Optional.of(match);
+    }
+
     @SuppressWarnings("unchecked")
     public List<Object[]> searchByEmbedding(float[] queryVec, int limit) {
         long t0 = System.nanoTime();

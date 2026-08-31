@@ -40,6 +40,8 @@ public class IngestionPipeline {
     @Inject StructureAwareChunker chunker;
     @Inject ContextualizerAiService contextualizerAi;
     @Inject GraphExtractor graphExtractor;
+    @Inject FusedChunkProcessor fusedChunkProcessor;
+    @Inject EntityCanonicalizer entityCanonicalizer;
     @Inject EmbeddingModelClient embeddingClient;
     @Inject ChunkRepository chunkRepo;
     @Inject GraphNodeRepository graphNodeRepo;
@@ -67,12 +69,21 @@ public class IngestionPipeline {
         job.persist();
     }
 
+    /**
+     * Main ingestion worker. Transaction management is deliberately split:
+     * <ul>
+     *   <li>Job status writes each get their own short-lived transaction via {@link #updateJobStatus}.</li>
+     *   <li>LLM calls + embedding run <b>without</b> an open transaction to avoid the 300s JTA
+     *       timeout (previously caused {@code TransactionRequiredException} for large batches).</li>
+     *   <li>A single final transaction wraps only the DB-heavy writes
+     *       ({@link #persistChunksAndEmbeddingsBulk} + {@link #persistGraphData}).</li>
+     * </ul>
+     */
     @io.quarkus.vertx.ConsumeEvent(value = "ingest.process.v1", blocking = true)
     public void processAsynchronously(IngestionTask task) {
         log.infov("pipeline: START Job {0} — {1} documents", task.jobId(), task.chunks().size());
 
         try {
-            utx.begin();
             updateJobStatus(task.jobId(), IngestionJobEntity.JobStatus.RUNNING, null);
 
             List<Chunk> current = task.chunks();
@@ -93,7 +104,6 @@ public class IngestionPipeline {
                     log.infov("pipeline: Job {0} SKIPPED — {1} chunks exist, all graph-extracted for docIds {2}",
                         task.jobId(), existingCount, docIds);
                     updateJobStatus(task.jobId(), IngestionJobEntity.JobStatus.DONE, null);
-                    utx.commit();
                     return;
                 }
                 if (config.graph().enabled()) {
@@ -101,13 +111,11 @@ public class IngestionPipeline {
                         task.jobId(), existingCount, notGraphExtracted, docIds);
                     extractGraphForExistingChunks(docIds);
                     updateJobStatus(task.jobId(), IngestionJobEntity.JobStatus.DONE, null);
-                    utx.commit();
                     return;
                 }
                 log.infov("pipeline: Job {0} SKIPPED — {1} chunks exist, graph disabled, {2} need extraction for docIds {3}",
                     task.jobId(), existingCount, notGraphExtracted, docIds);
                 updateJobStatus(task.jobId(), IngestionJobEntity.JobStatus.DONE, null);
-                utx.commit();
                 return;
             }
 
@@ -129,27 +137,47 @@ public class IngestionPipeline {
 
             Semaphore semaphore = new Semaphore(MAX_CONCURRENT_LLM_CALLS);
 
-            log.infov("pipeline: step 4/5 — contextualizing {0} chunks (max {1} concurrent LLM calls)",
-                current.size(), MAX_CONCURRENT_LLM_CALLS);
+            boolean fused = config.graph().enabled();
+            log.infov("pipeline: step 4/5 — contextualizing {0} chunks (max {1} concurrent LLM calls, fused={2})",
+                current.size(), MAX_CONCURRENT_LLM_CALLS, fused);
             List<Chunk> contextualized = new ArrayList<>(current.size());
+            Map<String, List<GraphTriple>> fusedTriplesByChunk = new LinkedHashMap<>();
+            Set<String> fusedOkChunkIds = new LinkedHashSet<>();
             int ctxFailCount = 0;
             for (int ci = 0; ci < current.size(); ci++) {
                 Chunk chunk = current.get(ci);
                 semaphore.acquire();
                 try {
                     String docText = docLookup.getOrDefault(chunk.docId(), chunk.text());
-                    String prompt = "Document title: '" + chunk.title() + "'\n<document>\n" + docText + "\n</document>\n\nChunk:\n<chunk>\n" + chunk.text() + "\n</chunk>\n\nGive a short single-sentence context (<=25 words) that situates this chunk within the document.";
-                    log.debugv("pipeline: contextualizing chunk[{0}/{1}] id={2}", ci + 1, current.size(), chunk.id());
-                    llmLogger.logRequest("Contextualizer", "contextualize", prompt);
-                    String context = llmLogger.logAndExecute("Contextualizer", () -> contextualizerAi.contextualize(prompt));
-                    log.debugv("pipeline: chunk[{0}] context='{1}'", chunk.id(),
-                        context.substring(0, Math.min(80, context.length())));
-                    Chunk updated = new Chunk(
-                        chunk.id(), chunk.docId(), chunk.title(), chunk.text(),
-                        context.isBlank() ? chunk.text() : context + "\n" + chunk.text(),
-                        chunk.goldForQuestionIds()
-                    );
-                    contextualized.add(updated);
+                    if (fused) {
+                        log.debugv("pipeline: fused analyzing chunk[{0}/{1}] id={2}", ci + 1, current.size(), chunk.id());
+                        var result = fusedChunkProcessor.process(chunk.title(), docText, chunk.text());
+                        fusedTriplesByChunk.put(chunk.id(), result.triples());
+                        if (result.ok()) {
+                            fusedOkChunkIds.add(chunk.id());
+                        } else {
+                            ctxFailCount++;
+                        }
+                        Chunk updated = new Chunk(
+                            chunk.id(), chunk.docId(), chunk.title(), chunk.text(),
+                            result.contextualText(),
+                            chunk.goldForQuestionIds()
+                        );
+                        contextualized.add(updated);
+                    } else {
+                        String prompt = "Document title: '" + chunk.title() + "'\n<document>\n" + docText + "\n</document>\n\nChunk:\n<chunk>\n" + chunk.text() + "\n</chunk>\n\nGive a short single-sentence context (<=25 words) that situates this chunk within the document.";
+                        log.debugv("pipeline: contextualizing chunk[{0}/{1}] id={2}", ci + 1, current.size(), chunk.id());
+                        llmLogger.logRequest("Contextualizer", "contextualize", prompt);
+                        String context = llmLogger.logAndExecute("Contextualizer", () -> contextualizerAi.contextualize(prompt));
+                        log.debugv("pipeline: chunk[{0}] context='{1}'", chunk.id(),
+                            context.substring(0, Math.min(80, context.length())));
+                        Chunk updated = new Chunk(
+                            chunk.id(), chunk.docId(), chunk.title(), chunk.text(),
+                            context.isBlank() ? chunk.text() : context + "\n" + chunk.text(),
+                            chunk.goldForQuestionIds()
+                        );
+                        contextualized.add(updated);
+                    }
                 } catch (Exception e) {
                     ctxFailCount++;
                     log.warnv("pipeline: contextualizer FAILED for chunk {0}: {1}", chunk.id(), e.getMessage());
@@ -164,7 +192,6 @@ public class IngestionPipeline {
                     "All " + ctxFailCount + " contextualization calls failed — LLM likely unreachable (check API key / endpoint)");
             }
 
-
             List<String> texts = contextualized.stream().map(Chunk::contextualText).toList();
             log.infov("pipeline: step 5b/5 — generating embeddings for {0} texts", texts.size());
             List<float[]> embeddings = embeddingClient.embedBatch(texts);
@@ -172,17 +199,37 @@ public class IngestionPipeline {
                 embeddings.size(), embeddings.isEmpty() ? 0 : embeddings.get(0).length);
 
             log.infov("pipeline: step 5c/5 — persisting chunks to database");
-            persistChunksAndEmbeddingsBulk(contextualized, embeddings);
+            try {
+                utx.begin();
+                persistChunksAndEmbeddingsBulk(contextualized, embeddings);
+                utx.commit();
+            } catch (Exception txEx) {
+                try { utx.rollback(); } catch (Exception ignored) {}
+                throw txEx;
+            }
 
             if (config.graph().enabled()) {
-                log.infov("pipeline: step 5a/5 — graph extraction (enabled)");
-                extractGraph(contextualized);
+                log.infov("pipeline: step 5a/5 — graph persistence (fused extraction, enabled)");
+                List<ChunkTriples> allPerChunk = contextualized.stream()
+                    .filter(c -> fusedOkChunkIds.contains(c.id()))
+                    .map(c -> new ChunkTriples(c, fusedTriplesByChunk.getOrDefault(c.id(), List.of())))
+                    .toList();
+                List<String> succeededChunkIds = allPerChunk.stream().map(ct -> ct.chunk().id()).toList();
+                log.infov("pipeline: computing graph nodes, embeddings, and edges (no tx)");
+                GraphPersistData graphData = computeGraphTriples(allPerChunk, succeededChunkIds);
+                try {
+                    utx.begin();
+                    persistGraphData(graphData);
+                    utx.commit();
+                } catch (Exception txEx) {
+                    try { utx.rollback(); } catch (Exception ignored) {}
+                    throw txEx;
+                }
             } else {
                 log.infov("pipeline: step 5a/5 — graph extraction SKIPPED (disabled)");
             }
 
             updateJobStatus(task.jobId(), IngestionJobEntity.JobStatus.DONE, null);
-            utx.commit();
             log.infov("pipeline: DONE Job {0}", task.jobId());
         } catch (Exception e) {
             log.errorv(e, "pipeline: FAILED Job {0}", task.jobId());
@@ -191,17 +238,33 @@ public class IngestionPipeline {
         }
     }
 
+    /**
+     * Updates the ingestion job status in its own short transaction.
+     * Safe to call at any point in the pipeline — it never reuses the outer transaction.
+     */
     protected void updateJobStatus(UUID jobId, IngestionJobEntity.JobStatus status, String error) {
-        IngestionJobEntity job = IngestionJobEntity.findById(jobId);
-        if (job != null) {
-            job.status = status;
-            if (status == IngestionJobEntity.JobStatus.DONE) {
-                job.processedChunks = job.totalChunks;
+        try {
+            utx.begin();
+        } catch (Exception e) {
+            log.warnv("updateJobStatus: utx.begin() failed for {0}: {1}", jobId, e.getMessage());
+            return;
+        }
+        try {
+            IngestionJobEntity job = IngestionJobEntity.findById(jobId);
+            if (job != null) {
+                job.status = status;
+                if (status == IngestionJobEntity.JobStatus.DONE) {
+                    job.processedChunks = job.totalChunks;
+                }
+                if (error != null) {
+                    job.errorMessage = error;
+                }
+                job.persist();
             }
-            if (error != null) {
-                job.errorMessage = error;
-            }
-            job.persist();
+            utx.commit();
+        } catch (Exception e) {
+            log.warnv("updateJobStatus: commit failed for {0}: {1}", jobId, e.getMessage());
+            try { utx.rollback(); } catch (Exception ignored) {}
         }
     }
 
@@ -245,46 +308,22 @@ public class IngestionPipeline {
 
     private record ChunkTriples(Chunk chunk, List<GraphTriple> triples) {}
 
-    private void extractGraph(List<Chunk> chunks) {
-        long t0 = System.currentTimeMillis();
-        log.infov("graph: START — extracting from {0} chunks", chunks.size());
-        List<ChunkTriples> allPerChunk = new ArrayList<>();
-        List<String> succeededChunkIds = new ArrayList<>();
-        int failCount = 0;
-        for (int i = 0; i < chunks.size(); i++) {
-            Chunk chunk = chunks.get(i);
-            try {
-                String ctxText = chunk.contextualText();
-                log.debugv("graph: chunk[{0}/{1}] id={2} text_preview='{3}'",
-                    i + 1, chunks.size(), chunk.id(),
-                    ctxText.substring(0, Math.min(80, ctxText.length())));
-                llmLogger.logRequest("GraphExtractor", "extract", ctxText);
-                String raw = llmLogger.logAndExecute("GraphExtractor", () -> graphExtractor.extract(ctxText));
-                log.debugv("graph: chunk[{0}] LLM raw response (len={1}): {2}",
-                    chunk.id(), raw.length(),
-                    raw.substring(0, Math.min(200, raw.length())));
-                List<GraphTriple> parsed = JSON.readValue(raw,
-                    new TypeReference<List<GraphTriple>>() {});
-                allPerChunk.add(new ChunkTriples(chunk, parsed));
-                succeededChunkIds.add(chunk.id());
-                log.infov("graph: chunk[{0}] → {1} triples: {2}",
-                    chunk.id(), parsed.size(), parsed);
-            } catch (Exception e) {
-                failCount++;
-                log.warnv("graph: EXTRACTION FAILED for chunk {0}: {1}", chunk.id(), e.getMessage());
-                log.debugv(e, "graph: full exception for chunk {0}", chunk.id());
-            }
-        }
-        int totalTriples = allPerChunk.stream().mapToInt(ct -> ct.triples().size()).sum();
-        log.infov("graph: LLM extraction done — {0} triples from {1} chunks ({2} failures) in {3}ms",
-            totalTriples, chunks.size(), failCount, System.currentTimeMillis() - t0);
+    /**
+     * Result of graph triple computation. Embeddings are pre-computed so that
+     * the subsequent DB persist call can run inside a short transaction.
+     */
+    private record GraphPersistData(
+        Map<String, GraphNodeEntity> uniqueNodes,
+        Map<String, float[]> nodeEmbeddings,
+        List<GraphEdgeEntity> edgesToPersist,
+        List<String> succeededChunkIds
+    ) {}
 
-        if (failCount == chunks.size() && !chunks.isEmpty()) {
-            String msg = "All " + failCount + " graph extractions failed — LLM likely unreachable (check API key / endpoint)";
-            log.errorv("graph: {0}", msg);
-            throw new RuntimeException(msg);
-        }
-
+    /**
+     * Computes unique nodes, their embeddings, and edges from extracted triples.
+     * This involves LLM/embedding calls and must NOT run inside a transaction.
+     */
+    private GraphPersistData computeGraphTriples(List<ChunkTriples> allPerChunk, List<String> succeededChunkIds) {
         Map<String, GraphNodeEntity> uniqueNodes = new LinkedHashMap<>();
         Map<String, float[]> nodeEmbeddings = new LinkedHashMap<>();
         List<GraphEdgeEntity> edgesToPersist = new ArrayList<>();
@@ -292,26 +331,26 @@ public class IngestionPipeline {
         for (ChunkTriples ct : allPerChunk) {
             String chunkId = ct.chunk().id();
             for (GraphTriple triple : ct.triples()) {
-                log.debugv("graph: processing triple — {0} --[{1}]--> {2} (chunk={3})",
-                    triple.source(), triple.relation(), triple.target(), chunkId);
+                String canonicalSrc = entityCanonicalizer.canonicalize(triple.source());
+                String canonicalTgt = entityCanonicalizer.canonicalize(triple.target());
                 var srcNode = uniqueNodes.computeIfAbsent(
-                    triple.source().toLowerCase(),
+                    canonicalSrc,
                     k -> {
-                        log.debugv("graph: creating NEW node for '{0}'", triple.source());
-                        float[] vec = embeddingClient.embed(triple.source());
+                        log.debugv("graph: creating NEW node for '{0}'", canonicalSrc);
+                        float[] vec = embeddingClient.embed(k);
                         String id = "node_" + UUID.randomUUID().toString().replace("-", "");
                         nodeEmbeddings.put(id, vec);
-                        return new GraphNodeEntity(id, chunkId, triple.source(), null, null);
+                        return new GraphNodeEntity(id, chunkId, k, null, null);
                     }
                 );
                 var tgtNode = uniqueNodes.computeIfAbsent(
-                    triple.target().toLowerCase(),
+                    canonicalTgt,
                     k -> {
-                        log.debugv("graph: creating NEW node for '{0}'", triple.target());
-                        float[] vec = embeddingClient.embed(triple.target());
+                        log.debugv("graph: creating NEW node for '{0}'", canonicalTgt);
+                        float[] vec = embeddingClient.embed(k);
                         String id = "node_" + UUID.randomUUID().toString().replace("-", "");
                         nodeEmbeddings.put(id, vec);
-                        return new GraphNodeEntity(id, chunkId, triple.target(), null, null);
+                        return new GraphNodeEntity(id, chunkId, k, null, null);
                     }
                 );
 
@@ -324,12 +363,19 @@ public class IngestionPipeline {
                 }
             }
         }
+        return new GraphPersistData(uniqueNodes, nodeEmbeddings, edgesToPersist, succeededChunkIds);
+    }
 
-        log.infov("graph: persisting {0} nodes, {1} edges", uniqueNodes.size(), edgesToPersist.size());
-        graphNodeRepo.persist(uniqueNodes.values());
-        graphEdgeRepo.persist(edgesToPersist);
+    /**
+     * Persists pre-computed graph nodes, edges, and embeddings. Runs ONLY DB writes
+     * (no LLM/embedding calls) — safe to call inside a short transaction.
+     */
+    private void persistGraphData(GraphPersistData data) {
+        log.infov("graph: persisting {0} nodes, {1} edges", data.uniqueNodes().size(), data.edgesToPersist().size());
+        graphNodeRepo.persist(data.uniqueNodes().values());
+        graphEdgeRepo.persist(data.edgesToPersist());
 
-        for (var entry : nodeEmbeddings.entrySet()) {
+        for (var entry : data.nodeEmbeddings().entrySet()) {
             String vecStr = Arrays.toString(entry.getValue());
             em.createNativeQuery(
                 "UPDATE graph_nodes SET embedding = CAST(:vec AS vector) WHERE id = :id")
@@ -340,21 +386,58 @@ public class IngestionPipeline {
 
         em.createNativeQuery(
             "UPDATE rag_chunks SET graph_extracted = TRUE WHERE id IN :ids")
-            .setParameter("ids", succeededChunkIds)
+            .setParameter("ids", data.succeededChunkIds())
             .executeUpdate();
-        log.infov("graph: marked {0}/{1} chunks as graph_extracted", succeededChunkIds.size(), chunks.size());
-
-        log.infov("graph: DONE — persisted {0} nodes + embeddings in {1}ms",
-            nodeEmbeddings.size(), System.currentTimeMillis() - t0);
+        log.infov("graph: marked {0} chunks as graph_extracted", data.succeededChunkIds().size());
     }
 
+    /**
+     * Legacy entry point: extracts graph via LLM for already-existing chunks.
+     * Called when some chunks lack graph_extracted=true.
+     * LLM calls run outside the transaction; only DB writes are transactional.
+     */
     private void extractGraphForExistingChunks(Set<String> docIds) {
         long t0 = System.currentTimeMillis();
         List<ChunkEntity> entities = chunkRepo.findByDocIdsNotGraphExtracted(docIds);
         List<Chunk> chunks = entities.stream().map(ChunkEntity::toDomain).toList();
         log.infov("graph: backfill START — {0} chunks need extraction for docIds {1}", chunks.size(), docIds);
         if (chunks.isEmpty()) return;
-        extractGraph(chunks);
+
+        // Phase 1: LLM extraction (no tx) — slow per-chunk LLM calls
+        List<ChunkTriples> allPerChunk = new ArrayList<>();
+        List<String> succeededChunkIds = new ArrayList<>();
+        int failCount = 0;
+        for (int i = 0; i < chunks.size(); i++) {
+            Chunk chunk = chunks.get(i);
+            try {
+                String ctxText = chunk.contextualText();
+                llmLogger.logRequest("GraphExtractor", "extract", ctxText);
+                String raw = llmLogger.logAndExecute("GraphExtractor", () -> graphExtractor.extract(ctxText));
+                List<GraphTriple> parsed = JSON.readValue(raw,
+                    new TypeReference<List<GraphTriple>>() {});
+                allPerChunk.add(new ChunkTriples(chunk, parsed));
+                succeededChunkIds.add(chunk.id());
+            } catch (Exception e) {
+                failCount++;
+                log.warnv("graph: EXTRACTION FAILED for chunk {0}: {1}", chunk.id(), e.getMessage());
+            }
+        }
+        if (failCount == chunks.size() && !chunks.isEmpty()) {
+            throw new RuntimeException("All " + failCount + " graph extractions failed — LLM unreachable");
+        }
+
+        // Phase 2: compute node embeddings (no tx) — slow embedding calls
+        GraphPersistData graphData = computeGraphTriples(allPerChunk, succeededChunkIds);
+
+        // Phase 3: DB writes (short tx)
+        try {
+            utx.begin();
+            persistGraphData(graphData);
+            utx.commit();
+        } catch (Exception txEx) {
+            try { utx.rollback(); } catch (Exception ignored) {}
+            throw new RuntimeException("graph persistence failed", txEx);
+        }
         log.infov("graph: backfill DONE in {0}ms", System.currentTimeMillis() - t0);
     }
 

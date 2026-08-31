@@ -282,5 +282,11 @@
                 <quarkus.native.additional-build-args>--future-defaults=all</quarkus.native.additional-build-args>
             </properties>
         </profile>
+        <profile>
+            <id>qdrant</id>
+            <properties>
+                <quarkus.profile>qdrant</quarkus.profile>
+            </properties>
+        </profile>
     </profiles>
 </project>
